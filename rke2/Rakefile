@@ -1,0 +1,93 @@
+# frozen_string_literal: true
+
+require 'rake'
+require 'yaml'
+require_relative 'lib/cluster_manager'
+require_relative 'lib/version_manager'
+
+namespace :rke2 do
+  desc 'Deploy RKE2 cluster'
+  task :deploy do
+    manager = RKE2::ClusterManager.new
+    manager.deploy
+  end
+
+  desc 'Optimize cluster performance'
+  task :optimize do
+    manager = RKE2::ClusterManager.new
+    manager.optimize
+  end
+
+  desc 'Add a worker node'
+  task :add_worker, [:host, :user, :name] do |_t, args|
+    manager = RKE2::ClusterManager.new
+    node_info = {
+      'host' => args[:host],
+      'user' => args[:user],
+      'name' => args[:name]
+    }
+    manager.scale('add', node_info)
+  end
+
+  desc 'Remove a worker node'
+  task :remove_worker, [:name] do |_t, args|
+    manager = RKE2::ClusterManager.new
+    node_info = { 'name' => args[:name] }
+    manager.scale('remove', node_info)
+  end
+
+  desc 'Check component versions'
+  task :check_versions do
+    version_manager = RKE2::VersionManager.new
+    version_manager.check_versions
+  end
+
+  desc 'Check version compatibility'
+  task :check_compatibility do
+    version_manager = RKE2::VersionManager.new
+    version_manager.check_compatibility
+  end
+end
+
+namespace :git do
+  desc 'Push changes to git repository'
+  task :push do
+    system 'git add .'
+    system "git commit -m 'Update #{Time.now}.'"
+    system 'git pull'
+    system 'git push origin main'
+  end
+end
+
+namespace :test do
+  begin
+    require 'rspec/core/rake_task'
+    RSpec::Core::RakeTask.new(:spec)
+  rescue LoadError
+    puts 'RSpec not available'
+  end
+
+  begin
+    require 'rubocop/rake_task'
+    RuboCop::RakeTask.new(:lint) do |task|
+      task.options = ['--display-cop-names']
+    end
+  rescue LoadError
+    puts 'RuboCop not available'
+  end
+end
+
+namespace :doc do
+  begin
+    require 'yard'
+    YARD::Rake::YardocTask.new do |t|
+      t.files = ['lib/**/*.rb']
+      t.options = ['--no-private']
+      t.stats_options = ['--list-undoc']
+    end
+  rescue LoadError
+    puts 'YARD not available'
+  end
+end
+
+task default: ['test:spec', 'test:lint']
