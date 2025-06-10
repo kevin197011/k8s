@@ -25,8 +25,8 @@
 1. 克隆仓库：
 
 ```bash
-git clone https://github.com/kevin197011/rke2-manager.git
-cd rke2-manager
+git clone https://github.com/kevin197011/k8s.git
+cd rke2
 ```
 
 2. 运行安装脚本：
