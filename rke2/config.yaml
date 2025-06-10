@@ -28,22 +28,22 @@ worker_nodes:
 versions:
   # Core Components
   rke2:
-    version: v1.29.1+rke2r1
+    version: v1.29.2+rke2r1
     url_template: https://github.com/rancher/rke2/releases/download/{version}/rke2
 
   kubernetes:
-    version: v1.29.1
+    version: v1.29.2
     min_version: v1.28.0
     max_version: v1.29.x
 
   containerd:
-    version: v1.7.11
+    version: v1.7.13
     url_template: https://github.com/containerd/containerd/releases/download/v{version}/containerd-{version}-linux-amd64.tar.gz
 
   # Network Components
   calico:
-    version: v3.27.0
-    operator_version: v1.32.3
+    version: v3.27.2
+    operator_version: v1.32.6
     url_template: https://github.com/projectcalico/calico/releases/download/v{version}/release-v{version}.tgz
 
   # Management UI
@@ -56,15 +56,15 @@ versions:
 
   # Supporting Tools
   helm:
-    version: v3.14.0
+    version: v3.14.2
     url_template: https://get.helm.sh/helm-{version}-linux-amd64.tar.gz
 
   cert_manager:
-    version: v1.14.1
+    version: v1.14.3
     url_template: https://github.com/cert-manager/cert-manager/releases/download/{version}/cert-manager.yaml
 
   kubectl:
-    version: v1.29.1
+    version: v1.29.2
     url_template: https://dl.k8s.io/release/{version}/bin/linux/amd64/kubectl
 
   kubectx:
@@ -73,16 +73,16 @@ versions:
 
   # Monitoring Stack
   prometheus:
-    version: v2.49.1
-    operator_version: v0.71.2
+    version: v2.50.1
+    operator_version: v0.72.0
 
   grafana:
-    version: 10.3.3
+    version: 10.4.0
 
   # Storage
   longhorn:
-    version: v1.5.3
-    helm_chart_version: 1.5.3
+    version: v1.6.0
+    helm_chart_version: 1.6.0
 
 # 版本兼容性矩阵
 compatibility_matrix:
