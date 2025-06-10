@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'yaml'
 require 'json'
 require 'digest'
@@ -67,7 +69,6 @@ module RKE2
 
     def collect_node_states
       # 收集节点状态
-      `kubectl get nodes -o json`
       nodes_json = JSON.parse(`kubectl get nodes -o json`)
       nodes_json['items'].map do |node|
         {
@@ -96,8 +97,14 @@ module RKE2
       end
 
       # RKE2 特定组件
+      version = begin
+                  File.read('/var/lib/rancher/rke2/agent/version').strip
+                rescue
+                  nil
+                end
+
       components[:rke2] = {
-        version: File.read('/var/lib/rancher/rke2/agent/version').strip rescue nil,
+        version: version,
         status: check_rke2_status
       }
 
@@ -188,10 +195,21 @@ module RKE2
     end
 
     def check_rke2_status
-      service_status = `systemctl is-active rke2-server.service`.strip rescue 'unknown'
+      service_status = begin
+                        `systemctl is-active rke2-server.service`.strip
+                      rescue
+                        'unknown'
+                      end
+
+      process_running = begin
+                         `pgrep rke2`.strip.split("\n").any?
+                       rescue
+                         false
+                       end
+
       {
         service: service_status,
-        process: `pgrep rke2`.strip.split("\n").any? rescue false
+        process: process_running
       }
     end
 
