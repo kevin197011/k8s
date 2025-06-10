@@ -32,7 +32,7 @@
 
 1. 克隆仓库：
 ```bash
-git clone https://github.com/yourusername/k8s.git
+git clone https://github.com/kevin197011/k8s.git
 cd k8s
 ```
 

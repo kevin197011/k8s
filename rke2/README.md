@@ -25,7 +25,7 @@
 1. 克隆仓库：
 
 ```bash
-git clone https://github.com/yourusername/rke2-manager.git
+git clone https://github.com/kevin197011/rke2-manager.git
 cd rke2-manager
 ```
 
