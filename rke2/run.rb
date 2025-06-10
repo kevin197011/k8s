@@ -10,7 +10,9 @@ module RKE2
     def initialize
       @options = {
         config: 'config.yaml',
-        action: nil
+        action: nil,
+        node: nil,
+        force: false
       }
       @parser = create_option_parser
     end
@@ -31,6 +33,14 @@ module RKE2
         check_versions
       when 'check-compatibility'
         check_compatibility
+      when 'show-state'
+        show_state
+      when 'watch-state'
+        watch_state
+      when 'update-hosts'
+        update_hosts
+      when 'setup-lb'
+        setup_lb
       else
         puts @parser
         exit 1
@@ -41,88 +51,82 @@ module RKE2
 
     def create_option_parser
       OptionParser.new do |opts|
-        opts.banner = "Usage: #{File.basename($PROGRAM_NAME)} [options] ACTION"
-
-        opts.separator "\nActions:"
-        opts.separator "  deploy              - 部署新的 RKE2 集群"
-        opts.separator "  optimize            - 优化现有集群"
-        opts.separator "  add-worker          - 添加工作节点"
-        opts.separator "  remove-worker       - 移除工作节点"
-        opts.separator "  check-versions      - 检查组件版本"
-        opts.separator "  check-compatibility - 检查版本兼容性"
-
-        opts.separator "\nOptions:"
+        opts.banner = "Usage: #{$PROGRAM_NAME} [options] COMMAND"
 
         opts.on('-c', '--config FILE', 'Config file path (default: config.yaml)') do |file|
           @options[:config] = file
         end
 
-        opts.on('-h', '--host HOST', 'Worker node host (for add-worker)') do |host|
-          @options[:host] = host
+        opts.on('-n', '--node NAME', 'Node name for add/remove operations') do |name|
+          @options[:node] = name
         end
 
-        opts.on('-u', '--user USER', 'Worker node user (for add-worker)') do |user|
-          @options[:user] = user
+        opts.on('-f', '--force', 'Force operation without confirmation') do
+          @options[:force] = true
         end
 
-        opts.on('-n', '--name NAME', 'Worker node name') do |name|
-          @options[:name] = name
-        end
-
-        opts.on('--help', 'Show this help message') do
+        opts.on('-h', '--help', 'Show this help message') do
           puts opts
+          puts "\nCommands:"
+          puts "  deploy         Deploy a new RKE2 cluster"
+          puts "  optimize       Optimize cluster settings"
+          puts "  add-worker     Add a worker node"
+          puts "  remove-worker  Remove a worker node"
+          puts "  show-state     Show current cluster state"
+          puts "  watch-state    Watch cluster state changes"
+          puts "  update-hosts   Update hosts files on all nodes"
+          puts "  setup-lb       Setup Nginx load balancer"
           exit
         end
-
-        opts.separator "\nExamples:"
-        opts.separator "  #{File.basename($PROGRAM_NAME)} deploy"
-        opts.separator "  #{File.basename($PROGRAM_NAME)} optimize"
-        opts.separator "  #{File.basename($PROGRAM_NAME)} add-worker -h worker3.example.com -u root -n worker3"
-        opts.separator "  #{File.basename($PROGRAM_NAME)} remove-worker -n worker3"
-        opts.separator "  #{File.basename($PROGRAM_NAME)} check-versions"
       end
     end
 
     def deploy_cluster
       puts '开始部署 RKE2 集群...'
       manager = ClusterManager.new(@options[:config])
-      manager.deploy
+      if @options[:force] || confirm_action('deploy a new cluster')
+        manager.deploy
+      end
     end
 
     def optimize_cluster
       puts '开始优化集群...'
       manager = ClusterManager.new(@options[:config])
-      manager.optimize
+      if @options[:force] || confirm_action('optimize the cluster')
+        manager.optimize
+      end
     end
 
     def add_worker
-      unless @options[:host] && @options[:name]
-        puts "错误: 添加工作节点需要指定 --host 和 --name"
-        puts @parser
+      unless @options[:node]
+        puts "Error: Node name is required for add-worker command"
         exit 1
       end
 
-      puts "添加工作节点: #{@options[:name]} (#{@options[:host]})"
+      puts "添加工作节点: #{@options[:node]} (#{@options[:node]}.example.com)"
       manager = ClusterManager.new(@options[:config])
-      node_info = {
-        'host' => @options[:host],
-        'user' => @options[:user] || 'root',
-        'name' => @options[:name]
-      }
-      manager.scale('add', node_info)
+      if @options[:force] || confirm_action("add worker node #{@options[:node]}")
+        node_config = {
+          'name' => @options[:node],
+          'ip_address' => "192.168.1.#{@options[:node].split('worker')[1].to_i + 20}",
+          'hostname' => "#{@options[:node]}.example.com",
+          'username' => 'root'
+        }
+        manager.add_worker(node_config)
+      end
     end
 
     def remove_worker
-      unless @options[:name]
-        puts "错误: 移除工作节点需要指定 --name"
-        puts @parser
+      unless @options[:node]
+        puts "Error: Node name is required for remove-worker command"
         exit 1
       end
 
-      puts "移除工作节点: #{@options[:name]}"
+      puts "移除工作节点: #{@options[:node]}"
       manager = ClusterManager.new(@options[:config])
-      node_info = { 'name' => @options[:name] }
-      manager.scale('remove', node_info)
+      if @options[:force] || confirm_action("remove worker node #{@options[:node]}")
+        manager.remove_worker(@options[:node])
+      end
     end
 
     def check_versions
@@ -135,6 +139,52 @@ module RKE2
       puts '检查版本兼容性...'
       version_manager = VersionManager.new(@options[:config])
       version_manager.check_compatibility
+    end
+
+    def show_state
+      state = manager.state_manager.record_state
+      puts "\nCurrent Cluster State:"
+      puts JSON.pretty_generate(state)
+    end
+
+    def watch_state
+      puts "Watching cluster state (Press Ctrl+C to stop)..."
+      previous_hash = nil
+
+      begin
+        loop do
+          state = manager.state_manager.record_state
+          changes = manager.state_manager.compare_states(previous_hash)
+
+          if changes[:status] == :changed
+            puts "\nState change detected at #{Time.now}:"
+            puts JSON.pretty_generate(changes)
+          end
+
+          previous_hash = state[:hash]
+          sleep 10
+        end
+      rescue Interrupt
+        puts "\nStopped watching cluster state."
+      end
+    end
+
+    def update_hosts
+      if @options[:force] || confirm_action('update hosts files on all nodes')
+        manager.update_hosts_files
+      end
+    end
+
+    def setup_lb
+      if @options[:force] || confirm_action('setup Nginx load balancer')
+        manager.setup_nginx_lb
+      end
+    end
+
+    def confirm_action(action)
+      print "Are you sure you want to #{action}? [y/N] "
+      response = gets.chomp.downcase
+      response == 'y'
     end
   end
 end

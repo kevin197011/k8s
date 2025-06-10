@@ -6,22 +6,27 @@ default_user: root
 
 # 节点配置
 master_nodes:
-  - host: master1.example.com
-    user: root
+  - ip_address: 192.168.1.11
+    hostname: master1.example.com
+    username: root
     name: master1
-  - host: master2.example.com
-    user: root
+  - ip_address: 192.168.1.12
+    hostname: master2.example.com
+    username: root
     name: master2
-  - host: master3.example.com
-    user: root
+  - ip_address: 192.168.1.13
+    hostname: master3.example.com
+    username: root
     name: master3
 
 worker_nodes:
-  - host: worker1.example.com
-    user: root
+  - ip_address: 192.168.1.21
+    hostname: worker1.example.com
+    username: root
     name: worker1
-  - host: worker2.example.com
-    user: root
+  - ip_address: 192.168.1.22
+    hostname: worker2.example.com
+    username: root
     name: worker2
 
 # 版本信息
