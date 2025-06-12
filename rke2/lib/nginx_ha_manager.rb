@@ -1,8 +1,10 @@
 require 'net/ssh'
+require 'net/scp'
 require 'fileutils'
 require 'erb'
 require 'logger'
 require 'base64'
+require 'tempfile'
 
 module RKE2
   class NginxHAManager
@@ -118,11 +120,20 @@ module RKE2
     end
 
     def write_file_content(ssh, content, target_file)
-      # Encode content in base64 to avoid shell escaping issues
-      encoded_content = Base64.strict_encode64(content)
+      @logger.info "Writing content to #{target_file}..."
 
-      # Write content using base64 decode
-      execute_ssh_command(ssh, "echo '#{encoded_content}' | base64 -d > #{target_file}")
+      # Create a temporary file locally
+      temp_file = Tempfile.new('hosts')
+      begin
+        temp_file.write(content)
+        temp_file.flush
+
+        # Upload the file using SCP
+        ssh.scp.upload!(temp_file.path, target_file)
+      ensure
+        temp_file.close
+        temp_file.unlink
+      end
     end
 
     def update_hosts_file_direct(ssh)
@@ -147,9 +158,10 @@ module RKE2
 
       new_content = new_lines.join
 
-      # Write new content using base64
-      write_file_content(ssh, new_content, '/tmp/hosts.new')
-      execute_ssh_command(ssh, 'mv /tmp/hosts.new /etc/hosts')
+      # Write to temporary file first, then move it
+      remote_temp = "/tmp/hosts.#{Time.now.to_i}"
+      write_file_content(ssh, new_content, remote_temp)
+      execute_ssh_command(ssh, "mv #{remote_temp} /etc/hosts")
 
       @logger.info 'Hosts file updated successfully'
     end
@@ -192,9 +204,10 @@ module RKE2
 
           new_content = new_lines.join
 
-          # Write updated content using base64
-          write_file_content(ssh, new_content, '/tmp/hosts.tmpl.new')
-          execute_ssh_command(ssh, 'mv /tmp/hosts.tmpl.new /etc/cloud/templates/hosts.debian.tmpl')
+          # Write to temporary file first, then move it
+          remote_temp = "/tmp/hosts.tmpl.#{Time.now.to_i}"
+          write_file_content(ssh, new_content, remote_temp)
+          execute_ssh_command(ssh, "mv #{remote_temp} /etc/cloud/templates/hosts.debian.tmpl")
 
           # Force cloud-init to update hosts file
           execute_ssh_command(ssh, 'cloud-init single --name cc_update_etc_hosts --frequency always',
