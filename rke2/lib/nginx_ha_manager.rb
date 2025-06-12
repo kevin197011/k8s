@@ -119,27 +119,31 @@ module RKE2
     def update_hosts_file(ssh)
       @logger.info 'Updating hosts file...'
 
-      # Check if entry already exists
-      check_cmd = "grep -q '#{@nginx_server['ip_address']}.*#{@nginx_server['hostname']}' /etc/hosts"
-      exists = execute_ssh_command(ssh, check_cmd, allow_non_zero_exit: true)
+      # Read current hosts file content
+      current_content = execute_ssh_command(ssh, 'cat /etc/hosts', allow_non_zero_exit: true)
 
-      if exists.empty?
-        # Create hosts entry
-        hosts_entry = "#{@nginx_server['ip_address']} #{@nginx_server['hostname']}"
-
-        # First backup the hosts file
-        execute_ssh_command(ssh, 'cp /etc/hosts /etc/hosts.bak')
-
-        # Add the new entry
-        execute_ssh_command(ssh, "echo '#{hosts_entry}' >> /etc/hosts")
-
-        @logger.info 'Hosts file updated successfully'
-      else
-        @logger.info 'Hosts entry already exists, skipping update'
+      # Create new content by removing old entry if exists and adding new one
+      hosts_entry = "#{@nginx_server['ip_address']} #{@nginx_server['hostname']}"
+      new_lines = current_content.lines.reject do |line|
+        line.include?(@nginx_server['hostname']) || line.strip.empty?
       end
+      new_lines << hosts_entry << "\n"
+      new_content = new_lines.join
+
+      # Write to temporary file first
+      execute_ssh_command(ssh, "cat > /tmp/hosts.new << 'EOL'\n#{new_content}EOL")
+
+      # Move the file to its final location
+      execute_ssh_command(ssh, 'cat /tmp/hosts.new > /etc/hosts')
+
+      # Clean up
+      execute_ssh_command(ssh, 'rm -f /tmp/hosts.new', allow_non_zero_exit: true)
+
+      @logger.info 'Hosts file updated successfully'
 
       # Verify the entry
-      execute_ssh_command(ssh, "cat /etc/hosts | grep '#{@nginx_server['hostname']}'")
+      result = execute_ssh_command(ssh, "cat /etc/hosts | grep '#{@nginx_server['hostname']}'")
+      @logger.info "Current hosts entry: #{result.strip}"
     end
 
     def install_nginx(ssh)
