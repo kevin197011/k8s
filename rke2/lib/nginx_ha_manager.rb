@@ -115,6 +115,14 @@ module RKE2
 
     def install_nginx(ssh)
       @logger.info 'Installing Nginx...'
+
+      # Check if nginx is already installed
+      nginx_check = execute_ssh_command(ssh, 'which nginx || true', allow_non_zero_exit: true)
+      if nginx_check.strip != ''
+        @logger.info 'Nginx is already installed, skipping installation'
+        return
+      end
+
       # Update package lists
       begin
         execute_ssh_command(ssh, 'DEBIAN_FRONTEND=noninteractive apt-get update', allow_non_zero_exit: true)
@@ -122,8 +130,30 @@ module RKE2
         @logger.warn "apt-get update showed warnings but continuing: #{e.message}"
       end
 
-      # Install nginx
-      execute_ssh_command(ssh, 'DEBIAN_FRONTEND=noninteractive apt-get install -y nginx nginx-extras')
+      # Check package availability
+      begin
+        pkg_check = execute_ssh_command(ssh, 'apt-cache search nginx-extras', allow_non_zero_exit: true)
+        @logger.info "Available nginx packages: #{pkg_check}"
+      rescue StandardError => e
+        @logger.warn "Package search warning: #{e.message}"
+      end
+
+      # Install nginx with detailed error capture
+      begin
+        # First try with just nginx
+        @logger.info 'Attempting to install nginx...'
+        execute_ssh_command(ssh, 'DEBIAN_FRONTEND=noninteractive apt-get install -y nginx')
+
+        # Then try extras if available
+        @logger.info 'Attempting to install nginx-extras...'
+        execute_ssh_command(ssh, 'DEBIAN_FRONTEND=noninteractive apt-get install -y nginx-extras',
+                            allow_non_zero_exit: true)
+      rescue StandardError => e
+        error_details = execute_ssh_command(ssh, 'cat /var/log/apt/term.log 2>/dev/null || true',
+                                            allow_non_zero_exit: true)
+        @logger.error "Failed to install nginx. APT logs: #{error_details}"
+        raise "Failed to install nginx: #{e.message}"
+      end
     end
 
     def create_directories(ssh)
@@ -189,10 +219,9 @@ module RKE2
       @logger.debug "Result: #{result}"
 
       if $?.exitstatus && $?.exitstatus != 0 && !allow_non_zero_exit
-        @logger.error "Command failed: #{command}"
-        @logger.error "Exit status: #{$?.exitstatus}"
-        @logger.error "Output: #{result}"
-        raise "Command failed: #{command}"
+        error_msg = "Command failed: #{command}\nExit status: #{$?.exitstatus}\nOutput: #{result}"
+        @logger.error error_msg
+        raise error_msg
       end
 
       result
