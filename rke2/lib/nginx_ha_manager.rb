@@ -157,7 +157,39 @@ module RKE2
     end
 
     def create_directories(ssh)
-      execute_ssh_command(ssh, "mkdir -p #{NGINX_SITES_DIR} #{NGINX_SSL_DIR}")
+      @logger.info 'Creating required directories...'
+
+      # Check if directories already exist
+      dir_check = execute_ssh_command(ssh,
+                                      "[ -d #{NGINX_SITES_DIR} ] && [ -d #{NGINX_SSL_DIR} ] && echo 'exists' || echo 'not exists'", allow_non_zero_exit: true)
+
+      if dir_check.strip == 'exists'
+        @logger.info 'Required directories already exist'
+        return
+      end
+
+      # Check if /etc/nginx exists
+      nginx_dir_check = execute_ssh_command(ssh, '[ -d /etc/nginx ] && echo "exists" || echo "not exists"',
+                                            allow_non_zero_exit: true)
+
+      if nginx_dir_check.strip != 'exists'
+        # If /etc/nginx doesn't exist, we need to create it first
+        execute_ssh_command(ssh, 'mkdir -p /etc/nginx')
+      end
+
+      # Create required directories
+      [NGINX_SITES_DIR, NGINX_SSL_DIR].each do |dir|
+        # Create directory if it doesn't exist
+        dir_exists = execute_ssh_command(ssh, "[ -d #{dir} ] && echo 'exists' || echo 'not exists'",
+                                         allow_non_zero_exit: true)
+
+        next unless dir_exists.strip != 'exists'
+
+        execute_ssh_command(ssh, "mkdir -p #{dir}")
+        # Set proper permissions
+        execute_ssh_command(ssh, "chown -R nginx:nginx #{dir}")
+        execute_ssh_command(ssh, "chmod 755 #{dir}")
+      end
     end
 
     def setup_ssl_certificates(ssh)
