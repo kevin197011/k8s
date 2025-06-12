@@ -4,6 +4,7 @@ require 'yaml'
 require 'json'
 require 'digest'
 require 'fileutils'
+require_relative 'logger_manager'
 
 module RKE2
   class StateManager
@@ -12,23 +13,28 @@ module RKE2
 
     def initialize(cluster_name)
       @cluster_name = cluster_name
+      @logger = LoggerManager.create('state')
       FileUtils.mkdir_p(STATE_DIR)
       load_current_state
     end
 
     def load_current_state
       @current_state = if File.exist?(CURRENT_STATE_FILE)
-        YAML.load_file(CURRENT_STATE_FILE) || {}
-      else
-        {}
-      end
+                         @logger.debug "Loading current state from #{CURRENT_STATE_FILE}"
+                         YAML.load_file(CURRENT_STATE_FILE) || {}
+                       else
+                         @logger.info "No current state file found at #{CURRENT_STATE_FILE}, starting fresh"
+                         {}
+                       end
     end
 
     def save_current_state
+      @logger.debug "Saving current state to #{CURRENT_STATE_FILE}"
       File.write(CURRENT_STATE_FILE, @current_state.to_yaml)
     end
 
     def record_state
+      @logger.info "Recording state for cluster: #{@cluster_name}"
       new_state = {
         timestamp: Time.now.utc,
         cluster_name: @cluster_name,
@@ -78,7 +84,7 @@ module RKE2
           version: node['status']['nodeInfo']['kubeletVersion']
         }
       end
-    rescue
+    rescue StandardError
       []
     end
 
@@ -98,10 +104,10 @@ module RKE2
 
       # RKE2 特定组件
       version = begin
-                  File.read('/var/lib/rancher/rke2/agent/version').strip
-                rescue
-                  nil
-                end
+        File.read('/var/lib/rancher/rke2/agent/version').strip
+      rescue StandardError
+        nil
+      end
 
       components[:rke2] = {
         version: version,
@@ -109,22 +115,22 @@ module RKE2
       }
 
       components
-    rescue
+    rescue StandardError
       {}
     end
 
     def collect_network_state
       # 收集网络状态
       {
-        pods: JSON.parse(`kubectl get pods -n calico-system -o json`)['items'].map { |pod|
+        pods: JSON.parse(`kubectl get pods -n calico-system -o json`)['items'].map do |pod|
           {
             name: pod['metadata']['name'],
             status: pod['status']['phase']
           }
-        },
+        end,
         services: JSON.parse(`kubectl get services --all-namespaces -o json`)['items'].count
       }
-    rescue
+    rescue StandardError
       {}
     end
 
@@ -135,11 +141,12 @@ module RKE2
         deployments: `kubectl get deployments --all-namespaces -o json`,
         services: `kubectl get services --all-namespaces -o json`
       }
-    rescue
+    rescue StandardError
       {}
     end
 
     def calculate_state_hash(state)
+      @logger.debug 'Calculating state hash'
       Digest::SHA256.hexdigest(state.to_json)
     end
 
@@ -147,10 +154,10 @@ module RKE2
       changes = {
         added: new_nodes - old_nodes,
         removed: old_nodes - new_nodes,
-        changed: new_nodes.select { |n|
+        changed: new_nodes.select do |n|
           old_node = old_nodes.find { |o| o[:name] == n[:name] }
           old_node && (old_node != n)
-        }
+        end
       }
 
       {
@@ -184,7 +191,7 @@ module RKE2
     end
 
     def compare_resources(old_resources, new_resources)
-      changes = [:pods, :deployments, :services].map do |resource|
+      changes = %i[pods deployments services].map do |resource|
         [resource, old_resources[resource] != new_resources[resource]]
       end.to_h
 
@@ -196,16 +203,16 @@ module RKE2
 
     def check_rke2_status
       service_status = begin
-                        `systemctl is-active rke2-server.service`.strip
-                      rescue
-                        'unknown'
-                      end
+        `systemctl is-active rke2-server.service`.strip
+      rescue StandardError
+        'unknown'
+      end
 
       process_running = begin
-                         `pgrep rke2`.strip.split("\n").any?
-                       rescue
-                         false
-                       end
+        `pgrep rke2`.strip.split("\n").any?
+      rescue StandardError
+        false
+      end
 
       {
         service: service_status,

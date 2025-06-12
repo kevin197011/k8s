@@ -12,6 +12,7 @@ require_relative 'state_manager'
 require_relative 'hosts_manager'
 require_relative 'nginx_ha_manager'
 require_relative 'ssh_manager'
+require_relative 'logger_manager'
 
 module RKE2
   class ClusterManager
@@ -22,6 +23,7 @@ module RKE2
       @config = YAML.load_file(config_path)
       @config_path = config_path
       @cluster_name = @config['cluster_name']
+      @logger = LoggerManager.create('cluster')
       @state_manager = StateManager.new(@cluster_name)
       @version_manager = VersionManager.new(@config_path)
       @system_optimizer = SystemOptimizer.new(@config)
@@ -32,7 +34,7 @@ module RKE2
     end
 
     def deploy
-      puts "Deploying RKE2 cluster: #{@cluster_name}"
+      @logger.info "Deploying RKE2 cluster: #{@cluster_name}"
 
       # 更新所有节点的 hosts 文件
       update_hosts_files
@@ -52,7 +54,7 @@ module RKE2
     end
 
     def optimize
-      puts "Optimizing RKE2 cluster: #{@cluster_name}"
+      @logger.info "Optimizing RKE2 cluster: #{@cluster_name}"
 
       # 记录优化前状态
       pre_optimize_state = @state_manager.record_state
@@ -314,7 +316,7 @@ module RKE2
 
     def handle_resource_changes(details)
       details[:details].each do |resource, changed|
-        puts "#{resource.to_s.capitalize} configuration changed" if changed
+        @logger.info "#{resource.to_s.capitalize} configuration changed" if changed
       end
     end
   end

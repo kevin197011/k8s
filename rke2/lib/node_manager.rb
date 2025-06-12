@@ -3,16 +3,18 @@
 
 require 'net/ssh'
 require 'net/scp'
+require_relative 'logger_manager'
 
 module RKE2
   class NodeManager
     def initialize(config)
       @config = config
       @ssh_manager = SSHManager.new(config)
+      @logger = LoggerManager.create('node')
     end
 
     def deploy_first_master(node)
-      puts "Deploying first master node: #{node['host']}"
+      @logger.info "Deploying first master node: #{node['host']}"
 
       copy_ssh_key(node)
       install_rke2_server(node, true)
@@ -22,25 +24,25 @@ module RKE2
     end
 
     def deploy_additional_master(node)
-      puts "Deploying additional master node: #{node['host']}"
+      @logger.info "Deploying additional master node: #{node['host']}"
 
       copy_ssh_key(node)
       install_rke2_server(node, false)
     end
 
     def deploy_worker(node)
-      puts "Deploying worker node: #{node['host']}"
+      @logger.info "Deploying worker node: #{node['host']}"
 
       copy_ssh_key(node)
       install_rke2_agent(node)
     end
 
     def add_worker(node_config)
-      puts "Adding worker node: #{node_config['name']}"
+      @logger.info "Adding worker node: #{node_config['name']}"
 
       # 测试 SSH 连接
       unless @ssh_manager.test_connection(node_config)
-        puts "Failed to connect to #{node_config['name']}, skipping..."
+        @logger.error "Failed to connect to #{node_config['name']}, skipping..."
         return false
       end
 
@@ -52,7 +54,7 @@ module RKE2
     end
 
     def remove_worker(node_name)
-      puts "Removing worker node: #{node_name}"
+      @logger.info "Removing worker node: #{node_name}"
 
       node_config = find_worker_node(node_name)
       return false unless node_config

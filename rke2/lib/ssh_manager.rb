@@ -3,12 +3,14 @@
 
 require 'net/ssh'
 require 'net/scp'
+require_relative 'logger_manager'
 
 module RKE2
   class SSHManager
     def initialize(config)
       @config = config
       @ssh_config = config['ssh']
+      @logger = LoggerManager.create('ssh')
     end
 
     def connect(node)
@@ -30,23 +32,23 @@ module RKE2
 
     def execute_command(node, command)
       connect(node) do |ssh|
-        puts "Executing on #{node['name']}: #{command}"
+        @logger.info "Executing on #{node['name']}: #{command}"
         output = ssh.exec!(command)
-        puts output if output
+        @logger.debug output if output
         output
       end
     end
 
     def upload_file(node, local_path, remote_path)
       connect(node) do |ssh|
-        puts "Uploading #{local_path} to #{node['name']}:#{remote_path}"
+        @logger.info "Uploading #{local_path} to #{node['name']}:#{remote_path}"
         ssh.scp.upload!(local_path, remote_path)
       end
     end
 
     def download_file(node, remote_path, local_path)
       connect(node) do |ssh|
-        puts "Downloading #{node['name']}:#{remote_path} to #{local_path}"
+        @logger.info "Downloading #{node['name']}:#{remote_path} to #{local_path}"
         ssh.scp.download!(remote_path, local_path)
       end
     end
@@ -55,7 +57,7 @@ module RKE2
       execute_command(node, 'echo "SSH connection test successful"')
       true
     rescue StandardError => e
-      puts "Failed to connect to #{node['name']}: #{e.message}"
+      @logger.error "Failed to connect to #{node['name']}: #{e.message}"
       false
     end
 

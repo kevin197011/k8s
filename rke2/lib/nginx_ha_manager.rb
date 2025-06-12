@@ -5,6 +5,7 @@ require 'erb'
 require 'logger'
 require 'base64'
 require 'tempfile'
+require_relative 'logger_manager'
 
 module RKE2
   class NginxHAManager
@@ -19,8 +20,7 @@ module RKE2
       @nginx_server = config.dig('api_server', 'nginx_server')
       @api_port = config.dig('api_server', 'port') || 6443
       @nginx_port = config.dig('api_server', 'nginx_port') || 8443
-      @logger = Logger.new(STDOUT)
-      @logger.level = Logger::INFO
+      @logger = LoggerManager.create('nginx_ha')
 
       validate_config
     end

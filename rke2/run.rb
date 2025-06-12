@@ -4,6 +4,7 @@
 require 'optparse'
 require_relative 'lib/cluster_manager'
 require_relative 'lib/version_manager'
+require_relative 'lib/logger_manager'
 
 module RKE2
   class CLI
@@ -15,6 +16,7 @@ module RKE2
         force: false
       }
       @parser = create_option_parser
+      @logger = LoggerManager.create('cli')
     end
 
     def run(args = ARGV)
@@ -43,6 +45,7 @@ module RKE2
       when 'setup-lb'
         setup_lb
       else
+        @logger.error "Unknown action: #{@options[:action]}"
         puts @parser
         exit 1
       end
@@ -149,7 +152,7 @@ module RKE2
     end
 
     def watch_state
-      puts 'Watching cluster state (Press Ctrl+C to stop)...'
+      @logger.info 'Watching cluster state (Press Ctrl+C to stop)...'
       previous_hash = nil
 
       begin
@@ -158,15 +161,15 @@ module RKE2
           changes = manager.state_manager.compare_states(previous_hash)
 
           if changes[:status] == :changed
-            puts "\nState change detected at #{Time.now}:"
-            puts JSON.pretty_generate(changes)
+            @logger.info "\nState change detected at #{Time.now}:"
+            @logger.info JSON.pretty_generate(changes)
           end
 
           previous_hash = state[:hash]
           sleep 10
         end
       rescue Interrupt
-        puts "\nStopped watching cluster state."
+        @logger.info "\nStopped watching cluster state."
       end
     end
 
