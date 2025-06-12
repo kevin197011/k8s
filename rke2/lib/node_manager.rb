@@ -8,8 +8,7 @@ module RKE2
   class NodeManager
     def initialize(config)
       @config = config
-      @ssh_key_path = File.expand_path('~/.ssh/id_rsa')
-      ensure_ssh_key
+      @ssh_manager = SSHManager.new(config)
     end
 
     def deploy_first_master(node)
@@ -36,33 +35,36 @@ module RKE2
       install_rke2_agent(node)
     end
 
-    def add_worker(node_info)
-      puts "Adding worker node: #{node_info['host']}"
+    def add_worker(node_config)
+      puts "Adding worker node: #{node_config['name']}"
 
-      node = {
-        'host' => node_info['host'],
-        'user' => node_info['user'] || @config['default_user'],
-        'name' => node_info['name']
-      }
-
-      deploy_worker(node)
-    end
-
-    def remove_worker(node_info)
-      puts "Removing worker node: #{node_info['name']}"
-
-      # 排空节点
-      system("kubectl drain #{node_info['name']} --ignore-daemonsets --delete-emptydir-data")
-
-      # 停止服务
-      Net::SSH.start(node_info['host'], node_info['user']) do |ssh|
-        ssh.exec!('systemctl stop rke2-agent')
-        ssh.exec!('systemctl disable rke2-agent')
-        ssh.exec!('rm -rf /var/lib/rancher/rke2')
+      # 测试 SSH 连接
+      unless @ssh_manager.test_connection(node_config)
+        puts "Failed to connect to #{node_config['name']}, skipping..."
+        return false
       end
 
+      # 设置免密登录
+      @ssh_manager.setup_passwordless_ssh(node_config)
+
+      # 部署工作节点
+      deploy_worker(node_config)
+    end
+
+    def remove_worker(node_name)
+      puts "Removing worker node: #{node_name}"
+
+      node_config = find_worker_node(node_name)
+      return false unless node_config
+
+      # 排空节点
+      drain_node(node_name)
+
+      # 停止服务并清理
+      cleanup_worker(node_config)
+
       # 从集群中删除节点
-      system("kubectl delete node #{node_info['name']}")
+      delete_node(node_name)
     end
 
     private
@@ -126,6 +128,33 @@ module RKE2
         ssh.exec!('systemctl enable rke2-agent')
         ssh.exec!('systemctl start rke2-agent')
       end
+    end
+
+    def find_worker_node(node_name)
+      @config['worker_nodes'].find { |node| node['name'] == node_name }
+    end
+
+    def drain_node(node_name)
+      puts "Draining node #{node_name}..."
+      system("kubectl drain #{node_name} --ignore-daemonsets --delete-emptydir-data --force")
+    end
+
+    def cleanup_worker(node_config)
+      cleanup_commands = [
+        'systemctl stop rke2-agent',
+        'systemctl disable rke2-agent',
+        'rm -rf /var/lib/rancher/rke2',
+        'rm -rf /etc/rancher/rke2'
+      ]
+
+      cleanup_commands.each do |cmd|
+        @ssh_manager.execute_command(node_config, cmd)
+      end
+    end
+
+    def delete_node(node_name)
+      puts "Deleting node #{node_name} from cluster..."
+      system("kubectl delete node #{node_name}")
     end
   end
 end

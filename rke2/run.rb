@@ -19,6 +19,7 @@ module RKE2
 
     def run(args = ARGV)
       @parser.parse!(args)
+      @options[:action] = args.shift
 
       case @options[:action]
       when 'deploy'
@@ -68,14 +69,14 @@ module RKE2
         opts.on('-h', '--help', 'Show this help message') do
           puts opts
           puts "\nCommands:"
-          puts "  deploy         Deploy a new RKE2 cluster"
-          puts "  optimize       Optimize cluster settings"
-          puts "  add-worker     Add a worker node"
-          puts "  remove-worker  Remove a worker node"
-          puts "  show-state     Show current cluster state"
-          puts "  watch-state    Watch cluster state changes"
-          puts "  update-hosts   Update hosts files on all nodes"
-          puts "  setup-lb       Setup Nginx load balancer"
+          puts '  deploy         Deploy a new RKE2 cluster'
+          puts '  optimize       Optimize cluster settings'
+          puts '  add-worker     Add a worker node'
+          puts '  remove-worker  Remove a worker node'
+          puts '  show-state     Show current cluster state'
+          puts '  watch-state    Watch cluster state changes'
+          puts '  update-hosts   Update hosts files on all nodes'
+          puts '  setup-lb       Setup Nginx load balancer'
           exit
         end
       end
@@ -84,49 +85,49 @@ module RKE2
     def deploy_cluster
       puts '开始部署 RKE2 集群...'
       manager = ClusterManager.new(@options[:config])
-      if @options[:force] || confirm_action('deploy a new cluster')
-        manager.deploy
-      end
+      return unless @options[:force] || confirm_action('deploy a new cluster')
+
+      manager.deploy
     end
 
     def optimize_cluster
       puts '开始优化集群...'
       manager = ClusterManager.new(@options[:config])
-      if @options[:force] || confirm_action('optimize the cluster')
-        manager.optimize
-      end
+      return unless @options[:force] || confirm_action('optimize the cluster')
+
+      manager.optimize
     end
 
     def add_worker
       unless @options[:node]
-        puts "Error: Node name is required for add-worker command"
+        puts 'Error: Node name is required for add-worker command'
         exit 1
       end
 
       puts "添加工作节点: #{@options[:node]} (#{@options[:node]}.example.com)"
       manager = ClusterManager.new(@options[:config])
-      if @options[:force] || confirm_action("add worker node #{@options[:node]}")
-        node_config = {
-          'name' => @options[:node],
-          'ip_address' => "192.168.1.#{@options[:node].split('worker')[1].to_i + 20}",
-          'hostname' => "#{@options[:node]}.example.com",
-          'username' => 'root'
-        }
-        manager.add_worker(node_config)
-      end
+      return unless @options[:force] || confirm_action("add worker node #{@options[:node]}")
+
+      node_config = {
+        'name' => @options[:node],
+        'ip_address' => "192.168.1.#{@options[:node].split('worker')[1].to_i + 20}",
+        'hostname' => "#{@options[:node]}.example.com",
+        'username' => 'root'
+      }
+      manager.add_worker(node_config)
     end
 
     def remove_worker
       unless @options[:node]
-        puts "Error: Node name is required for remove-worker command"
+        puts 'Error: Node name is required for remove-worker command'
         exit 1
       end
 
       puts "移除工作节点: #{@options[:node]}"
       manager = ClusterManager.new(@options[:config])
-      if @options[:force] || confirm_action("remove worker node #{@options[:node]}")
-        manager.remove_worker(@options[:node])
-      end
+      return unless @options[:force] || confirm_action("remove worker node #{@options[:node]}")
+
+      manager.remove_worker(@options[:node])
     end
 
     def check_versions
@@ -148,7 +149,7 @@ module RKE2
     end
 
     def watch_state
-      puts "Watching cluster state (Press Ctrl+C to stop)..."
+      puts 'Watching cluster state (Press Ctrl+C to stop)...'
       previous_hash = nil
 
       begin
@@ -170,15 +171,15 @@ module RKE2
     end
 
     def update_hosts
-      if @options[:force] || confirm_action('update hosts files on all nodes')
-        manager.update_hosts_files
-      end
+      return unless @options[:force] || confirm_action('update hosts files on all nodes')
+
+      manager.update_hosts_files
     end
 
     def setup_lb
-      if @options[:force] || confirm_action('setup Nginx load balancer')
-        manager.setup_nginx_lb
-      end
+      return unless @options[:force] || confirm_action('setup Nginx load balancer')
+
+      manager.setup_nginx_lb
     end
 
     def confirm_action(action)

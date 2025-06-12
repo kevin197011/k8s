@@ -11,20 +11,24 @@ require_relative 'system_optimizer'
 require_relative 'state_manager'
 require_relative 'hosts_manager'
 require_relative 'nginx_ha_manager'
+require_relative 'ssh_manager'
 
 module RKE2
   class ClusterManager
-    attr_reader :config, :version_manager, :node_manager, :system_optimizer, :state_manager, :hosts_manager, :nginx_ha_manager
+    attr_reader :config, :version_manager, :node_manager, :system_optimizer, :state_manager, :hosts_manager,
+                :nginx_ha_manager, :ssh_manager
 
     def initialize(config_path)
       @config = YAML.load_file(config_path)
+      @config_path = config_path
       @cluster_name = @config['cluster_name']
       @state_manager = StateManager.new(@cluster_name)
-      @version_manager = VersionManager.new(@config['versions'])
-      @system_optimizer = SystemOptimizer.new
+      @version_manager = VersionManager.new(@config_path)
+      @system_optimizer = SystemOptimizer.new(@config)
       @node_manager = NodeManager.new(@config)
       @hosts_manager = HostsManager.new(@config)
       @nginx_ha_manager = NginxHAManager.new(@config)
+      @ssh_manager = SSHManager.new(@config)
     end
 
     def deploy
@@ -93,28 +97,152 @@ module RKE2
     end
 
     def update_hosts_files
-      puts "Updating hosts files on all nodes..."
+      puts 'Updating hosts files on all nodes...'
       @hosts_manager.update_all_hosts
     end
 
     def setup_nginx_lb
-      puts "Setting up Nginx load balancer..."
+      puts 'Setting up Nginx load balancer...'
       @nginx_ha_manager.setup_nginx_lb
     end
 
     private
 
     def deploy_master_nodes
+      first_master = true
       @config['master_nodes'].each do |node|
         puts "Deploying master node: #{node['name']}"
-        # 部署主节点的具体实现
+
+        # 测试 SSH 连接
+        unless @ssh_manager.test_connection(node)
+          puts "Failed to connect to #{node['name']}, skipping..."
+          next
+        end
+
+        # 设置免密登录
+        @ssh_manager.setup_passwordless_ssh(node)
+
+        if first_master
+          deploy_first_master(node)
+          first_master = false
+        else
+          deploy_additional_master(node)
+        end
       end
     end
 
     def deploy_worker_nodes
       @config['worker_nodes'].each do |node|
         puts "Deploying worker node: #{node['name']}"
-        # 部署工作节点的具体实现
+
+        # 测试 SSH 连接
+        unless @ssh_manager.test_connection(node)
+          puts "Failed to connect to #{node['name']}, skipping..."
+          next
+        end
+
+        # 设置免密登录
+        @ssh_manager.setup_passwordless_ssh(node)
+
+        # 部署工作节点
+        deploy_worker(node)
+      end
+    end
+
+    def deploy_first_master(node)
+      commands = [
+        # 系统准备
+        'swapoff -a',
+        'setenforce 0',
+
+        # 下载并安装 RKE2
+        "curl -sfL https://get.rke2.io | INSTALL_RKE2_VERSION=#{@config['versions']['rke2']['version']} sh -",
+
+        # 创建配置目录
+        'mkdir -p /etc/rancher/rke2',
+
+        # 写入配置文件
+        "echo 'token: #{@config['token']}' > /etc/rancher/rke2/config.yaml",
+        "echo 'tls-san:' >> /etc/rancher/rke2/config.yaml"
+      ]
+
+      # 添加 tls-san 配置
+      @config['tls-san'].each do |san|
+        commands << "echo '  - #{san}' >> /etc/rancher/rke2/config.yaml"
+      end
+
+      # 添加其他命令
+      commands += [
+        # 启动 RKE2 服务
+        'systemctl enable rke2-server',
+        'systemctl start rke2-server',
+
+        # 设置环境变量
+        'echo "export KUBECONFIG=/etc/rancher/rke2/rke2.yaml" >> ~/.bashrc',
+        'echo "export PATH=\$PATH:/var/lib/rancher/rke2/bin" >> ~/.bashrc',
+        '. ~/.bashrc'
+      ]
+
+      commands.each do |cmd|
+        @ssh_manager.execute_command(node, cmd)
+      end
+    end
+
+    def deploy_additional_master(node)
+      first_master = @config['master_nodes'].first
+      server_url = "https://#{first_master['ip_address']}:9345"
+
+      commands = [
+        # 系统准备
+        'swapoff -a',
+        'setenforce 0',
+
+        # 下载并安装 RKE2
+        "curl -sfL https://get.rke2.io | INSTALL_RKE2_VERSION=#{@config['versions']['rke2']['version']} sh -",
+
+        # 创建配置目录
+        'mkdir -p /etc/rancher/rke2',
+
+        # 写入配置文件
+        "echo 'server: #{server_url}' > /etc/rancher/rke2/config.yaml",
+        "echo 'token: #{@config['token']}' >> /etc/rancher/rke2/config.yaml",
+
+        # 启动 RKE2 服务
+        'systemctl enable rke2-server',
+        'systemctl start rke2-server'
+      ]
+
+      commands.each do |cmd|
+        @ssh_manager.execute_command(node, cmd)
+      end
+    end
+
+    def deploy_worker(node)
+      first_master = @config['master_nodes'].first
+      server_url = "https://#{first_master['ip_address']}:9345"
+
+      commands = [
+        # 系统准备
+        'swapoff -a',
+        'setenforce 0',
+
+        # 下载并安装 RKE2
+        "curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE=agent INSTALL_RKE2_VERSION=#{@config['versions']['rke2']['version']} sh -",
+
+        # 创建配置目录
+        'mkdir -p /etc/rancher/rke2',
+
+        # 写入配置文件
+        "echo 'server: #{server_url}' > /etc/rancher/rke2/config.yaml",
+        "echo 'token: #{@config['token']}' >> /etc/rancher/rke2/config.yaml",
+
+        # 启动 RKE2 服务
+        'systemctl enable rke2-agent',
+        'systemctl start rke2-agent'
+      ]
+
+      commands.each do |cmd|
+        @ssh_manager.execute_command(node, cmd)
       end
     end
 
@@ -125,9 +253,9 @@ module RKE2
       when :changed
         handle_changes(comparison[:changes])
       when :unchanged
-        puts "No changes detected in cluster state."
+        puts 'No changes detected in cluster state.'
       when :initial_state
-        puts "Initial cluster state recorded."
+        puts 'Initial cluster state recorded.'
       end
     end
 
@@ -151,41 +279,37 @@ module RKE2
 
     def handle_node_changes(details)
       if details[:details][:added].any?
-        puts "New nodes added:"
+        puts 'New nodes added:'
         details[:details][:added].each { |node| puts "  - #{node[:name]}" }
         update_hosts_files
       end
 
       if details[:details][:removed].any?
-        puts "Nodes removed:"
+        puts 'Nodes removed:'
         details[:details][:removed].each { |node| puts "  - #{node[:name]}" }
         update_hosts_files
       end
 
-      if details[:details][:changed].any?
-        puts "Nodes changed:"
-        details[:details][:changed].each { |node| puts "  - #{node[:name]}" }
-      end
+      return unless details[:details][:changed].any?
+
+      puts 'Nodes changed:'
+      details[:details][:changed].each { |node| puts "  - #{node[:name]}" }
     end
 
     def handle_component_changes(details)
-      if details[:details][:core]
-        puts "Core components changed"
-      end
+      puts 'Core components changed' if details[:details][:core]
 
-      if details[:details][:rke2]
-        puts "RKE2 component status changed"
-      end
+      return unless details[:details][:rke2]
+
+      puts 'RKE2 component status changed'
     end
 
     def handle_network_changes(details)
-      if details[:details][:pods]
-        puts "Network pod configuration changed"
-      end
+      puts 'Network pod configuration changed' if details[:details][:pods]
 
-      if details[:details][:services]
-        puts "Service configuration changed"
-      end
+      return unless details[:details][:services]
+
+      puts 'Service configuration changed'
     end
 
     def handle_resource_changes(details)

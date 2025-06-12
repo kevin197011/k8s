@@ -4,30 +4,52 @@
 cluster_name: rke2-cluster
 default_user: root
 
+# SSH 配置
+ssh:
+  private_key_path: ~/.ssh/id_rsa
+  public_key_path: ~/.ssh/id_rsa.pub
+  password: your-ssh-password  # 如果使用密码认证
+  port: 22
+  connection_timeout: 30
+  connection_retries: 3
+
+# API Server 负载均衡配置
+api_server:
+  nginx_server:
+    ip_address: 178.128.93.192  # 使用第一个主节点作为负载均衡器
+    hostname: lb.example.com
+    username: root
+  port: 6443      # API Server 端口
+  nginx_port: 8443 # Nginx 监听端口
+
 # 节点配置
 master_nodes:
-  - ip_address: 192.168.1.11
+  - ip_address: 178.128.93.192
     hostname: master1.example.com
     username: root
     name: master1
-  - ip_address: 192.168.1.12
-    hostname: master2.example.com
-    username: root
-    name: master2
-  - ip_address: 192.168.1.13
-    hostname: master3.example.com
-    username: root
-    name: master3
+  # - ip_address: 192.168.1.12
+  #   hostname: master2.example.com
+  #   username: root
+  #   name: master2
+  # - ip_address: 192.168.1.13
+  #   hostname: master3.example.com
+  #   username: root
+  #   name: master3
 
 worker_nodes:
-  - ip_address: 192.168.1.21
+  - ip_address: 178.128.93.192
     hostname: worker1.example.com
     username: root
     name: worker1
-  - ip_address: 192.168.1.22
-    hostname: worker2.example.com
-    username: root
-    name: worker2
+  # - ip_address: 192.168.1.15
+  #   hostname: worker2.example.com
+  #   username: root
+  #   name: worker2
+  # - ip_address: 192.168.1.16
+  #   hostname: worker3.example.com
+  #   username: root
+  #   name: worker3
 
 # 版本信息
 versions:
