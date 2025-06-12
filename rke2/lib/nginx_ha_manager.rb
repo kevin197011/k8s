@@ -119,6 +119,68 @@ module RKE2
     def update_hosts_file(ssh)
       @logger.info 'Updating hosts file...'
 
+      # Check if system is using cloud-init to manage hosts
+      cloud_init_check = execute_ssh_command(ssh,
+                                             '[ -f /etc/cloud/cloud.cfg ] && grep -q "^manage_etc_hosts:" /etc/cloud/cloud.cfg && echo "yes" || echo "no"', allow_non_zero_exit: true)
+
+      if cloud_init_check.strip == 'yes'
+        @logger.info 'System is using cloud-init to manage hosts file'
+
+        # Check if template file exists
+        template_exists = execute_ssh_command(ssh,
+                                              '[ -f /etc/cloud/templates/hosts.debian.tmpl ] && echo "yes" || echo "no"', allow_non_zero_exit: true)
+
+        if template_exists.strip == 'yes'
+          # Update the template file
+          @logger.info 'Updating hosts template file...'
+          current_template = execute_ssh_command(ssh, 'cat /etc/cloud/templates/hosts.debian.tmpl',
+                                                 allow_non_zero_exit: true)
+
+          # Remove old entry if exists and add new one
+          hosts_entry = "#{@nginx_server['ip_address']} #{@nginx_server['hostname']}"
+          new_lines = current_template.lines.reject do |line|
+            line.include?(@nginx_server['hostname']) || line.strip.empty?
+          end
+
+          # Add entry before the IPv6 section if it exists
+          ipv6_index = new_lines.find_index { |line| line.include?('# The following lines are desirable for IPv6') }
+          if ipv6_index
+            new_lines.insert(ipv6_index, "#{hosts_entry}\n")
+          else
+            new_lines << "#{hosts_entry}\n"
+          end
+
+          new_content = new_lines.join
+
+          # Write updated content to template
+          execute_ssh_command(ssh, "cat > /tmp/hosts.tmpl.new << 'EOL'\n#{new_content}EOL")
+          execute_ssh_command(ssh, 'cat /tmp/hosts.tmpl.new > /etc/cloud/templates/hosts.debian.tmpl')
+          execute_ssh_command(ssh, 'rm -f /tmp/hosts.tmpl.new', allow_non_zero_exit: true)
+
+          # Force cloud-init to update hosts file
+          execute_ssh_command(ssh, 'cloud-init single --name cc_update_etc_hosts --frequency always',
+                              allow_non_zero_exit: true)
+        else
+          # If template doesn't exist, disable cloud-init hosts management
+          @logger.info 'Disabling cloud-init hosts management...'
+          execute_ssh_command(ssh, "sed -i 's/manage_etc_hosts: true/manage_etc_hosts: false/' /etc/cloud/cloud.cfg")
+
+          # Update hosts file directly
+          update_hosts_file_direct(ssh)
+        end
+      else
+        # If not using cloud-init, update hosts file directly
+        update_hosts_file_direct(ssh)
+      end
+
+      # Verify the entry
+      result = execute_ssh_command(ssh, "cat /etc/hosts | grep '#{@nginx_server['hostname']}'")
+      @logger.info "Current hosts entry: #{result.strip}"
+    end
+
+    def update_hosts_file_direct(ssh)
+      @logger.info 'Updating hosts file directly...'
+
       # Read current hosts file content
       current_content = execute_ssh_command(ssh, 'cat /etc/hosts', allow_non_zero_exit: true)
 
@@ -127,7 +189,15 @@ module RKE2
       new_lines = current_content.lines.reject do |line|
         line.include?(@nginx_server['hostname']) || line.strip.empty?
       end
-      new_lines << hosts_entry << "\n"
+
+      # Add entry before the IPv6 section if it exists
+      ipv6_index = new_lines.find_index { |line| line.include?('# The following lines are desirable for IPv6') }
+      if ipv6_index
+        new_lines.insert(ipv6_index, "#{hosts_entry}\n")
+      else
+        new_lines << "#{hosts_entry}\n"
+      end
+
       new_content = new_lines.join
 
       # Write to temporary file first
@@ -140,10 +210,6 @@ module RKE2
       execute_ssh_command(ssh, 'rm -f /tmp/hosts.new', allow_non_zero_exit: true)
 
       @logger.info 'Hosts file updated successfully'
-
-      # Verify the entry
-      result = execute_ssh_command(ssh, "cat /etc/hosts | grep '#{@nginx_server['hostname']}'")
-      @logger.info "Current hosts entry: #{result.strip}"
     end
 
     def install_nginx(ssh)
