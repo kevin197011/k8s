@@ -88,6 +88,9 @@ module RKE2
 
       begin
         Net::SSH.start(@nginx_server['ip_address'], @nginx_server['username'], verify_host_key: :never) do |ssh|
+          # Update hosts file
+          update_hosts_file(ssh)
+
           # 安装 Nginx
           install_nginx(ssh)
 
@@ -111,6 +114,32 @@ module RKE2
         @logger.error e.backtrace.join("\n")
         raise
       end
+    end
+
+    def update_hosts_file(ssh)
+      @logger.info 'Updating hosts file...'
+
+      # Check if entry already exists
+      check_cmd = "grep -q '#{@nginx_server['ip_address']}.*#{@nginx_server['hostname']}' /etc/hosts"
+      exists = execute_ssh_command(ssh, check_cmd, allow_non_zero_exit: true)
+
+      if exists.empty?
+        # Create hosts entry
+        hosts_entry = "#{@nginx_server['ip_address']} #{@nginx_server['hostname']}"
+
+        # First backup the hosts file
+        execute_ssh_command(ssh, 'cp /etc/hosts /etc/hosts.bak')
+
+        # Add the new entry
+        execute_ssh_command(ssh, "echo '#{hosts_entry}' >> /etc/hosts")
+
+        @logger.info 'Hosts file updated successfully'
+      else
+        @logger.info 'Hosts entry already exists, skipping update'
+      end
+
+      # Verify the entry
+      execute_ssh_command(ssh, "cat /etc/hosts | grep '#{@nginx_server['hostname']}'")
     end
 
     def install_nginx(ssh)
@@ -195,19 +224,45 @@ module RKE2
     def setup_ssl_certificates(ssh)
       @logger.info 'Setting up SSL certificates...'
 
-      # 生成自签名证书
-      cert_cmd = <<~SHELL
-        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-          -keyout #{NGINX_SSL_DIR}/kube-api.key \
-          -out #{NGINX_SSL_DIR}/kube-api.crt \
-          -subj "/CN=kube-apiserver/O=Kubernetes"
-      SHELL
+      # Check if certificates already exist
+      cert_check = execute_ssh_command(ssh,
+                                       "[ -f #{NGINX_SSL_DIR}/kube-api.crt ] && [ -f #{NGINX_SSL_DIR}/kube-api.key ] && echo 'exists' || echo 'not exists'",
+                                       allow_non_zero_exit: true)
 
-      execute_ssh_command(ssh, cert_cmd)
+      if cert_check.strip == 'exists'
+        @logger.info 'SSL certificates already exist'
+        return
+      end
 
-      # 设置权限
-      execute_ssh_command(ssh, "chmod 644 #{NGINX_SSL_DIR}/kube-api.crt")
-      execute_ssh_command(ssh, "chmod 600 #{NGINX_SSL_DIR}/kube-api.key")
+      # Create temporary directory for certificate generation
+      execute_ssh_command(ssh, 'mkdir -p /tmp/nginx-ssl')
+
+      begin
+        # Generate certificates in temporary directory
+        cert_cmd = <<~SHELL
+          cd /tmp/nginx-ssl && \
+          openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+            -keyout kube-api.key \
+            -out kube-api.crt \
+            -subj "/CN=kube-apiserver/O=Kubernetes"
+        SHELL
+
+        execute_ssh_command(ssh, cert_cmd)
+
+        # Move certificates to final location
+        execute_ssh_command(ssh, "mv /tmp/nginx-ssl/kube-api.key #{NGINX_SSL_DIR}/")
+        execute_ssh_command(ssh, "mv /tmp/nginx-ssl/kube-api.crt #{NGINX_SSL_DIR}/")
+
+        # Set proper permissions
+        execute_ssh_command(ssh, "chown nginx:nginx #{NGINX_SSL_DIR}/kube-api.key #{NGINX_SSL_DIR}/kube-api.crt")
+        execute_ssh_command(ssh, "chmod 600 #{NGINX_SSL_DIR}/kube-api.key")
+        execute_ssh_command(ssh, "chmod 644 #{NGINX_SSL_DIR}/kube-api.crt")
+      ensure
+        # Clean up temporary directory
+        execute_ssh_command(ssh, 'rm -rf /tmp/nginx-ssl', allow_non_zero_exit: true)
+      end
+
+      @logger.info 'SSL certificates setup completed'
     end
 
     def setup_nginx_config(ssh)
