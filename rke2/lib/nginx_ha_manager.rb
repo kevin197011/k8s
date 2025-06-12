@@ -152,10 +152,9 @@ module RKE2
 
           new_content = new_lines.join
 
-          # Write updated content to template
-          execute_ssh_command(ssh, "cat > /tmp/hosts.tmpl.new << 'EOL'\n#{new_content}EOL")
-          execute_ssh_command(ssh, 'cat /tmp/hosts.tmpl.new > /etc/cloud/templates/hosts.debian.tmpl')
-          execute_ssh_command(ssh, 'rm -f /tmp/hosts.tmpl.new', allow_non_zero_exit: true)
+          # Write updated content using echo
+          execute_ssh_command(ssh, "echo '#{new_content}' > /tmp/hosts.tmpl.new")
+          execute_ssh_command(ssh, 'mv /tmp/hosts.tmpl.new /etc/cloud/templates/hosts.debian.tmpl')
 
           # Force cloud-init to update hosts file
           execute_ssh_command(ssh, 'cloud-init single --name cc_update_etc_hosts --frequency always',
@@ -200,14 +199,9 @@ module RKE2
 
       new_content = new_lines.join
 
-      # Write to temporary file first
-      execute_ssh_command(ssh, "cat > /tmp/hosts.new << 'EOL'\n#{new_content}EOL")
-
-      # Move the file to its final location
-      execute_ssh_command(ssh, 'cat /tmp/hosts.new > /etc/hosts')
-
-      # Clean up
-      execute_ssh_command(ssh, 'rm -f /tmp/hosts.new', allow_non_zero_exit: true)
+      # Write new content using echo
+      execute_ssh_command(ssh, "echo '#{new_content}' > /tmp/hosts.new")
+      execute_ssh_command(ssh, 'mv /tmp/hosts.new /etc/hosts')
 
       @logger.info 'Hosts file updated successfully'
     end
