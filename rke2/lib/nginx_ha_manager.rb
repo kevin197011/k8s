@@ -1,3 +1,6 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
 require 'net/ssh'
 require 'net/scp'
 require 'fileutils'
@@ -6,6 +9,7 @@ require 'logger'
 require 'base64'
 require 'tempfile'
 require_relative 'logger_manager'
+require_relative 'hosts_manager'
 
 module RKE2
   class NginxHAManager
@@ -21,6 +25,7 @@ module RKE2
       @api_port = config.dig('api_server', 'port') || 6443
       @nginx_port = config.dig('api_server', 'nginx_port') || 8443
       @logger = LoggerManager.create('nginx_ha')
+      @hosts_manager = HostsManager.new(config)
 
       validate_config
     end
@@ -92,7 +97,7 @@ module RKE2
       begin
         Net::SSH.start(@nginx_server['ip_address'], @nginx_server['username'], verify_host_key: :never) do |ssh|
           # Update hosts file
-          update_hosts_file(ssh)
+          @hosts_manager.update_nginx_hosts(@nginx_server)
 
           # 安装 Nginx
           install_nginx(ssh)
@@ -117,117 +122,6 @@ module RKE2
         @logger.error e.backtrace.join("\n")
         raise
       end
-    end
-
-    def write_file_content(ssh, content, target_file)
-      @logger.info "Writing content to #{target_file}..."
-
-      # Create a temporary file locally
-      temp_file = Tempfile.new('hosts')
-      begin
-        temp_file.write(content)
-        temp_file.flush
-
-        # Upload the file using SCP
-        ssh.scp.upload!(temp_file.path, target_file)
-      ensure
-        temp_file.close
-        temp_file.unlink
-      end
-    end
-
-    def update_hosts_file_direct(ssh)
-      @logger.info 'Updating hosts file directly...'
-
-      # Read current hosts file content
-      current_content = execute_ssh_command(ssh, 'cat /etc/hosts', allow_non_zero_exit: true)
-
-      # Create new content by removing old entry if exists and adding new one
-      hosts_entry = "#{@nginx_server['ip_address']} #{@nginx_server['hostname']}"
-      new_lines = current_content.lines.reject do |line|
-        line.include?(@nginx_server['hostname']) || line.strip.empty?
-      end
-
-      # Add entry before the IPv6 section if it exists
-      ipv6_index = new_lines.find_index { |line| line.include?('# The following lines are desirable for IPv6') }
-      if ipv6_index
-        new_lines.insert(ipv6_index, "#{hosts_entry}\n")
-      else
-        new_lines << "#{hosts_entry}\n"
-      end
-
-      new_content = new_lines.join
-
-      # Write to temporary file first, then move it
-      remote_temp = "/tmp/hosts.#{Time.now.to_i}"
-      write_file_content(ssh, new_content, remote_temp)
-      execute_ssh_command(ssh, "mv #{remote_temp} /etc/hosts")
-
-      @logger.info 'Hosts file updated successfully'
-    end
-
-    def update_hosts_file(ssh)
-      @logger.info 'Updating hosts file...'
-
-      # Check if system is using cloud-init to manage hosts
-      cloud_init_check = execute_ssh_command(ssh,
-                                             '[ -f /etc/cloud/cloud.cfg ] && grep -q "^manage_etc_hosts:" /etc/cloud/cloud.cfg && echo "yes" || echo "no"',
-                                             allow_non_zero_exit: true)
-
-      if cloud_init_check.strip == 'yes'
-        @logger.info 'System is using cloud-init to manage hosts file'
-
-        # Check if template file exists
-        template_exists = execute_ssh_command(ssh,
-                                              '[ -f /etc/cloud/templates/hosts.debian.tmpl ] && echo "yes" || echo "no"',
-                                              allow_non_zero_exit: true)
-
-        if template_exists.strip == 'yes'
-          # Update the template file
-          @logger.info 'Updating hosts template file...'
-          current_template = execute_ssh_command(ssh, 'cat /etc/cloud/templates/hosts.debian.tmpl',
-                                                 allow_non_zero_exit: true)
-
-          # Remove old entry if exists and add new one
-          hosts_entry = "#{@nginx_server['ip_address']} #{@nginx_server['hostname']}"
-          new_lines = current_template.lines.reject do |line|
-            line.include?(@nginx_server['hostname']) || line.strip.empty?
-          end
-
-          # Add entry before the IPv6 section if it exists
-          ipv6_index = new_lines.find_index { |line| line.include?('# The following lines are desirable for IPv6') }
-          if ipv6_index
-            new_lines.insert(ipv6_index, "#{hosts_entry}\n")
-          else
-            new_lines << "#{hosts_entry}\n"
-          end
-
-          new_content = new_lines.join
-
-          # Write to temporary file first, then move it
-          remote_temp = "/tmp/hosts.tmpl.#{Time.now.to_i}"
-          write_file_content(ssh, new_content, remote_temp)
-          execute_ssh_command(ssh, "mv #{remote_temp} /etc/cloud/templates/hosts.debian.tmpl")
-
-          # Force cloud-init to update hosts file
-          execute_ssh_command(ssh, 'cloud-init single --name cc_update_etc_hosts --frequency always',
-                              allow_non_zero_exit: true)
-        else
-          # If template doesn't exist, disable cloud-init hosts management
-          @logger.info 'Disabling cloud-init hosts management...'
-          execute_ssh_command(ssh, "sed -i 's/manage_etc_hosts: true/manage_etc_hosts: false/' /etc/cloud/cloud.cfg")
-
-          # Update hosts file directly
-          update_hosts_file_direct(ssh)
-        end
-      else
-        # If not using cloud-init, update hosts file directly
-        update_hosts_file_direct(ssh)
-      end
-
-      # Verify the entry
-      result = execute_ssh_command(ssh, "cat /etc/hosts | grep '#{@nginx_server['hostname']}'")
-      @logger.info "Current hosts entry: #{result.strip}"
     end
 
     def install_nginx(ssh)

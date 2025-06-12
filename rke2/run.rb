@@ -198,11 +198,13 @@ if __FILE__ == $PROGRAM_NAME
   begin
     RKE2::CLI.new.run
   rescue Interrupt
-    puts "\n操作已取消"
+    logger = RKE2::LoggerManager.create('main')
+    logger.info "\n操作已取消"
     exit 1
   rescue StandardError => e
-    puts "错误: #{e.message}"
-    puts e.backtrace if ENV['DEBUG']
+    logger = RKE2::LoggerManager.create('main')
+    logger.error "错误: #{e.message}"
+    logger.debug e.backtrace.join("\n") if ENV['DEBUG']
     exit 1
   end
 end
