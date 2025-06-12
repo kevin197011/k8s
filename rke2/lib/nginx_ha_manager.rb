@@ -115,8 +115,15 @@ module RKE2
 
     def install_nginx(ssh)
       @logger.info 'Installing Nginx...'
-      execute_ssh_command(ssh, 'apt update')
-      execute_ssh_command(ssh, 'apt install -y nginx nginx-extras')
+      # Update package lists
+      begin
+        execute_ssh_command(ssh, 'DEBIAN_FRONTEND=noninteractive apt-get update', allow_non_zero_exit: true)
+      rescue StandardError => e
+        @logger.warn "apt-get update showed warnings but continuing: #{e.message}"
+      end
+
+      # Install nginx
+      execute_ssh_command(ssh, 'DEBIAN_FRONTEND=noninteractive apt-get install -y nginx nginx-extras')
     end
 
     def create_directories(ssh)
@@ -176,12 +183,12 @@ module RKE2
       raise 'Nginx service failed to start'
     end
 
-    def execute_ssh_command(ssh, command)
+    def execute_ssh_command(ssh, command, allow_non_zero_exit: false)
       @logger.debug "Executing: #{command}"
       result = ssh.exec!(command)
       @logger.debug "Result: #{result}"
 
-      if $?.exitstatus && $?.exitstatus != 0
+      if $?.exitstatus && $?.exitstatus != 0 && !allow_non_zero_exit
         @logger.error "Command failed: #{command}"
         @logger.error "Exit status: #{$?.exitstatus}"
         @logger.error "Output: #{result}"
