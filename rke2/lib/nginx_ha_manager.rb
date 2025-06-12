@@ -2,6 +2,7 @@ require 'net/ssh'
 require 'fileutils'
 require 'erb'
 require 'logger'
+require 'base64'
 
 module RKE2
   class NginxHAManager
@@ -116,65 +117,12 @@ module RKE2
       end
     end
 
-    def update_hosts_file(ssh)
-      @logger.info 'Updating hosts file...'
+    def write_file_content(ssh, content, target_file)
+      # Encode content in base64 to avoid shell escaping issues
+      encoded_content = Base64.strict_encode64(content)
 
-      # Check if system is using cloud-init to manage hosts
-      cloud_init_check = execute_ssh_command(ssh,
-                                             '[ -f /etc/cloud/cloud.cfg ] && grep -q "^manage_etc_hosts:" /etc/cloud/cloud.cfg && echo "yes" || echo "no"', allow_non_zero_exit: true)
-
-      if cloud_init_check.strip == 'yes'
-        @logger.info 'System is using cloud-init to manage hosts file'
-
-        # Check if template file exists
-        template_exists = execute_ssh_command(ssh,
-                                              '[ -f /etc/cloud/templates/hosts.debian.tmpl ] && echo "yes" || echo "no"', allow_non_zero_exit: true)
-
-        if template_exists.strip == 'yes'
-          # Update the template file
-          @logger.info 'Updating hosts template file...'
-          current_template = execute_ssh_command(ssh, 'cat /etc/cloud/templates/hosts.debian.tmpl',
-                                                 allow_non_zero_exit: true)
-
-          # Remove old entry if exists and add new one
-          hosts_entry = "#{@nginx_server['ip_address']} #{@nginx_server['hostname']}"
-          new_lines = current_template.lines.reject do |line|
-            line.include?(@nginx_server['hostname']) || line.strip.empty?
-          end
-
-          # Add entry before the IPv6 section if it exists
-          ipv6_index = new_lines.find_index { |line| line.include?('# The following lines are desirable for IPv6') }
-          if ipv6_index
-            new_lines.insert(ipv6_index, "#{hosts_entry}\n")
-          else
-            new_lines << "#{hosts_entry}\n"
-          end
-
-          new_content = new_lines.join
-
-          # Write updated content using echo
-          execute_ssh_command(ssh, "echo '#{new_content}' > /tmp/hosts.tmpl.new")
-          execute_ssh_command(ssh, 'mv /tmp/hosts.tmpl.new /etc/cloud/templates/hosts.debian.tmpl')
-
-          # Force cloud-init to update hosts file
-          execute_ssh_command(ssh, 'cloud-init single --name cc_update_etc_hosts --frequency always',
-                              allow_non_zero_exit: true)
-        else
-          # If template doesn't exist, disable cloud-init hosts management
-          @logger.info 'Disabling cloud-init hosts management...'
-          execute_ssh_command(ssh, "sed -i 's/manage_etc_hosts: true/manage_etc_hosts: false/' /etc/cloud/cloud.cfg")
-
-          # Update hosts file directly
-          update_hosts_file_direct(ssh)
-        end
-      else
-        # If not using cloud-init, update hosts file directly
-        update_hosts_file_direct(ssh)
-      end
-
-      # Verify the entry
-      result = execute_ssh_command(ssh, "cat /etc/hosts | grep '#{@nginx_server['hostname']}'")
-      @logger.info "Current hosts entry: #{result.strip}"
+      # Write content using base64 decode
+      execute_ssh_command(ssh, "echo '#{encoded_content}' | base64 -d > #{target_file}")
     end
 
     def update_hosts_file_direct(ssh)
@@ -199,11 +147,74 @@ module RKE2
 
       new_content = new_lines.join
 
-      # Write new content using echo
-      execute_ssh_command(ssh, "echo '#{new_content}' > /tmp/hosts.new")
+      # Write new content using base64
+      write_file_content(ssh, new_content, '/tmp/hosts.new')
       execute_ssh_command(ssh, 'mv /tmp/hosts.new /etc/hosts')
 
       @logger.info 'Hosts file updated successfully'
+    end
+
+    def update_hosts_file(ssh)
+      @logger.info 'Updating hosts file...'
+
+      # Check if system is using cloud-init to manage hosts
+      cloud_init_check = execute_ssh_command(ssh,
+                                             '[ -f /etc/cloud/cloud.cfg ] && grep -q "^manage_etc_hosts:" /etc/cloud/cloud.cfg && echo "yes" || echo "no"',
+                                             allow_non_zero_exit: true)
+
+      if cloud_init_check.strip == 'yes'
+        @logger.info 'System is using cloud-init to manage hosts file'
+
+        # Check if template file exists
+        template_exists = execute_ssh_command(ssh,
+                                              '[ -f /etc/cloud/templates/hosts.debian.tmpl ] && echo "yes" || echo "no"',
+                                              allow_non_zero_exit: true)
+
+        if template_exists.strip == 'yes'
+          # Update the template file
+          @logger.info 'Updating hosts template file...'
+          current_template = execute_ssh_command(ssh, 'cat /etc/cloud/templates/hosts.debian.tmpl',
+                                                 allow_non_zero_exit: true)
+
+          # Remove old entry if exists and add new one
+          hosts_entry = "#{@nginx_server['ip_address']} #{@nginx_server['hostname']}"
+          new_lines = current_template.lines.reject do |line|
+            line.include?(@nginx_server['hostname']) || line.strip.empty?
+          end
+
+          # Add entry before the IPv6 section if it exists
+          ipv6_index = new_lines.find_index { |line| line.include?('# The following lines are desirable for IPv6') }
+          if ipv6_index
+            new_lines.insert(ipv6_index, "#{hosts_entry}\n")
+          else
+            new_lines << "#{hosts_entry}\n"
+          end
+
+          new_content = new_lines.join
+
+          # Write updated content using base64
+          write_file_content(ssh, new_content, '/tmp/hosts.tmpl.new')
+          execute_ssh_command(ssh, 'mv /tmp/hosts.tmpl.new /etc/cloud/templates/hosts.debian.tmpl')
+
+          # Force cloud-init to update hosts file
+          execute_ssh_command(ssh, 'cloud-init single --name cc_update_etc_hosts --frequency always',
+                              allow_non_zero_exit: true)
+        else
+          # If template doesn't exist, disable cloud-init hosts management
+          @logger.info 'Disabling cloud-init hosts management...'
+          execute_ssh_command(ssh, "sed -i 's/manage_etc_hosts: true/manage_etc_hosts: false/' /etc/cloud/cloud.cfg")
+
+          # Update hosts file directly
+          update_hosts_file_direct(ssh)
+        end
+      else
+        # If not using cloud-init, update hosts file directly
+        update_hosts_file_direct(ssh)
+      end
+
+      # Verify the entry
+      result = execute_ssh_command(ssh, "cat /etc/hosts | grep '#{@nginx_server['hostname']}'")
+      @logger.info "Current hosts entry: #{result.strip}"
     end
 
     def install_nginx(ssh)
