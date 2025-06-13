@@ -21,7 +21,7 @@ module RKE2
     def initialize(config)
       @config = config
       @master_nodes = config['master_nodes']
-      @nginx_server = config.dig('api_server', 'nginx_server')
+      @lb_nodes = config['lb_nodes']
       @api_port = config.dig('api_server', 'port') || 6443
       @nginx_port = config.dig('api_server', 'nginx_port') || 8443
       @logger = LoggerManager.create('nginx_ha')
@@ -32,96 +32,81 @@ module RKE2
 
     def setup_nginx_lb
       @logger.info 'Setting up Nginx load balancer for API Server...'
-      setup_nginx_server
+      setup_lb_nodes
     end
 
     private
 
     def validate_config
-      raise 'Missing nginx_server configuration' unless @nginx_server
-      raise 'Missing nginx_server ip_address' unless @nginx_server['ip_address']
-      raise 'Missing nginx_server hostname' unless @nginx_server['hostname']
-      raise 'Missing nginx_server username' unless @nginx_server['username']
+      raise 'Missing lb_nodes configuration' unless @lb_nodes
+      raise 'No lb nodes configured' if @lb_nodes.nil? || @lb_nodes.empty?
       raise 'No master nodes configured' if @master_nodes.nil? || @master_nodes.empty?
+
+      @lb_nodes.each do |node|
+        raise "Missing ip_address for lb node: #{node['name']}" unless node['ip_address']
+        raise "Missing hostname for lb node: #{node['name']}" unless node['hostname']
+        raise "Missing username for lb node: #{node['name']}" unless node['username']
+      end
+    end
+
+    def setup_lb_nodes
+      @lb_nodes.each do |lb_node|
+        @logger.info "Setting up Nginx on load balancer: #{lb_node['hostname']}"
+
+        begin
+          Net::SSH.start(lb_node['ip_address'], lb_node['username'], verify_host_key: :never) do |ssh|
+            # Update hosts file
+            @hosts_manager.update_nginx_hosts(lb_node)
+
+            # 安装 Nginx
+            install_nginx(ssh)
+
+            # 创建必要的目录
+            create_directories(ssh)
+
+            # 生成并上传 SSL 证书
+            setup_ssl_certificates(ssh)
+
+            # 配置 Nginx
+            setup_nginx_config(ssh, lb_node)
+
+            # 启动服务
+            start_nginx_service(ssh)
+          end
+        rescue Net::SSH::AuthenticationFailed
+          @logger.error "Authentication failed for #{lb_node['hostname']}"
+          raise
+        rescue StandardError => e
+          @logger.error "Error setting up Nginx on #{lb_node['hostname']}: #{e.message}"
+          @logger.error e.backtrace.join("\n")
+          raise
+        end
+      end
     end
 
     def nginx_config_template
-      <<~EOF
-        # Nginx configuration for Kubernetes API Server Load Balancing
-        user nginx;
-        worker_processes auto;
-        error_log /var/log/nginx/error.log notice;
-        pid /var/run/nginx.pid;
-
-        events {
-            worker_connections 1024;
-        }
-
+      <<~CONF
+        # Nginx configuration for Kubernetes API Server Load Balancer
         stream {
-            log_format proxy '$remote_addr [$time_local] '
-                           '$protocol $status $bytes_sent $bytes_received '
-                           '$session_time "$upstream_addr"';
+          upstream kubernetes {
+            #{@master_nodes.map { |node| "    server #{node['ip_address']}:#{@api_port} max_fails=3 fail_timeout=30s;" }.join("\n")}
+          }
 
-            access_log /var/log/nginx/k8s-access.log proxy;
-            error_log  /var/log/nginx/k8s-error.log;
+          server {
+            listen #{@nginx_port} ssl;
+            proxy_connect_timeout 1s;
+            proxy_timeout 3s;
+            proxy_pass kubernetes;
 
-            upstream kubernetes {
-                least_conn;  # 使用最少连接数算法
-                <% @master_nodes.each do |node| %>
-                server <%= node['ip_address'] %>:<%= @api_port %> max_fails=3 fail_timeout=30s;
-                <% end %>
-            }
-
-            server {
-                listen <%= @nginx_port %> ssl;
-                proxy_connect_timeout 1s;
-                proxy_timeout 3s;
-                proxy_next_upstream on;
-
-                ssl_certificate <%= NGINX_SSL_DIR %>/kube-api.crt;
-                ssl_certificate_key <%= NGINX_SSL_DIR %>/kube-api.key;
-                ssl_session_timeout 5m;
-                ssl_protocols TLSv1.2 TLSv1.3;
-                ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
-                ssl_prefer_server_ciphers off;
-
-                proxy_pass kubernetes;
-            }
+            ssl_certificate #{NGINX_SSL_DIR}/kube-api.crt;
+            ssl_certificate_key #{NGINX_SSL_DIR}/kube-api.key;
+            ssl_session_timeout 5m;
+            ssl_protocols TLSv1.2 TLSv1.3;
+            ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+            ssl_prefer_server_ciphers off;
+          }
         }
-      EOF
-    end
-
-    def setup_nginx_server
-      @logger.info "Setting up Nginx on server: #{@nginx_server['hostname']}"
-
-      begin
-        Net::SSH.start(@nginx_server['ip_address'], @nginx_server['username'], verify_host_key: :never) do |ssh|
-          # Update hosts file
-          @hosts_manager.update_nginx_hosts(@nginx_server)
-
-          # 安装 Nginx
-          install_nginx(ssh)
-
-          # 创建必要的目录
-          create_directories(ssh)
-
-          # 生成并上传 SSL 证书
-          setup_ssl_certificates(ssh)
-
-          # 配置 Nginx
-          setup_nginx_config(ssh)
-
-          # 启动服务
-          start_nginx_service(ssh)
-        end
-      rescue Net::SSH::AuthenticationFailed
-        @logger.error "Authentication failed for #{@nginx_server['hostname']}"
-        raise
-      rescue StandardError => e
-        @logger.error "Error setting up Nginx on #{@nginx_server['hostname']}: #{e.message}"
-        @logger.error e.backtrace.join("\n")
-        raise
-      end
+      CONF
     end
 
     def install_nginx(ssh)
@@ -247,7 +232,7 @@ module RKE2
       @logger.info 'SSL certificates setup completed'
     end
 
-    def setup_nginx_config(ssh)
+    def setup_nginx_config(ssh, lb_node)
       @logger.info 'Configuring Nginx...'
 
       # 生成配置文件

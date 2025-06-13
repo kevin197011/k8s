@@ -15,10 +15,6 @@ ssh:
 
 # API Server 负载均衡配置
 api_server:
-  nginx_server:
-    ip_address: 178.128.93.192  # 使用第一个主节点作为负载均衡器
-    hostname: lb.example.com
-    username: root
   port: 6443      # API Server 端口
   nginx_port: 8443 # Nginx 监听端口
 
@@ -50,6 +46,13 @@ worker_nodes:
   #   hostname: worker3.example.com
   #   username: root
   #   name: worker3
+
+lb_nodes:
+  - ip_address: 178.128.93.192
+    hostname: lb1.example.com
+    username: root
+    name: lb1
+
 
 # 版本信息
 versions:

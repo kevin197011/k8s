@@ -100,7 +100,7 @@ module RKE2
 
     def update_hosts_files
       puts 'Updating hosts files on all nodes...'
-      @hosts_manager.update_all_hosts
+      @hosts_manager.update_hosts_files
     end
 
     def setup_nginx_lb
