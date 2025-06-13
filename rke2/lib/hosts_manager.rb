@@ -216,10 +216,10 @@ module RKE2
       begin
         Net::SSH.start(ip, username, verify_host_key: :never) do |ssh|
           # 首先备份当前的 hosts 文件
-          execute_ssh_command(ssh, "cp #{HOSTS_FILE} #{HOSTS_BACKUP}", allow_non_zero_exit: true)
+          execute_ssh_command(ssh, "sudo cp #{HOSTS_FILE} #{HOSTS_BACKUP}", allow_non_zero_exit: true)
 
           # 读取当前的 hosts 文件内容
-          current_content = execute_ssh_command(ssh, "cat #{HOSTS_FILE}", allow_non_zero_exit: true)
+          current_content = execute_ssh_command(ssh, "sudo cat #{HOSTS_FILE}", allow_non_zero_exit: true)
 
           # 移除旧的 RKE2 集群 hosts 记录（如果存在）
           new_content = remove_old_cluster_entries(current_content)
@@ -259,11 +259,12 @@ module RKE2
         temp_file.write(content)
         temp_file.flush
 
-        # 上传新的 hosts 文件
-        ssh.scp.upload!(temp_file.path, '/tmp/hosts.new')
+        # 上传新的 hosts 文件到临时位置
+        remote_temp = "/tmp/hosts.#{Time.now.to_i}"
+        ssh.scp.upload!(temp_file.path, remote_temp)
 
         # 使用 sudo 移动文件到最终位置
-        execute_ssh_command(ssh, "sudo mv /tmp/hosts.new #{HOSTS_FILE}")
+        execute_ssh_command(ssh, "sudo mv #{remote_temp} #{HOSTS_FILE}")
         execute_ssh_command(ssh, "sudo chmod 644 #{HOSTS_FILE}")
       ensure
         temp_file.close
@@ -273,16 +274,44 @@ module RKE2
 
     def execute_ssh_command(ssh, command, allow_non_zero_exit: false)
       @logger.debug "Executing: #{command}"
-      result = ssh.exec!(command)
-      @logger.debug "Result: #{result}"
 
-      if $?.exitstatus && $?.exitstatus != 0 && !allow_non_zero_exit
-        error_msg = "Command failed: #{command}\nExit status: #{$?.exitstatus}\nOutput: #{result}"
+      stdout_data = ''
+      stderr_data = ''
+      exit_code = nil
+
+      ssh.open_channel do |channel|
+        channel.exec(command) do |_ch, success|
+          raise "Could not execute command: #{command}" unless success
+
+          channel.on_data do |_, data|
+            stdout_data += data
+          end
+
+          channel.on_extended_data do |_, _, data|
+            stderr_data += data
+            @logger.warn "STDERR: #{data}"
+          end
+
+          channel.on_request('exit-status') do |_, data|
+            exit_code = data.read_long
+          end
+        end
+      end
+
+      # 等待命令执行完成
+      ssh.loop
+
+      @logger.debug "STDOUT: #{stdout_data}"
+      @logger.debug "STDERR: #{stderr_data}"
+      @logger.debug "Exit code: #{exit_code}"
+
+      if !allow_non_zero_exit && exit_code && exit_code != 0
+        error_msg = "Command failed: #{command}\nExit code: #{exit_code}\nSTDOUT: #{stdout_data}\nSTDERR: #{stderr_data}"
         @logger.error error_msg
         raise error_msg
       end
 
-      result
+      stdout_data
     end
   end
 end
