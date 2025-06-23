@@ -1,0 +1,150 @@
+# frozen_string_literal: true
+
+require 'rake'
+require 'yaml'
+require_relative 'lib/rke2_deploy'
+
+namespace :rke2 do
+  desc 'Deploy RKE2 cluster'
+  task :deploy do
+    deployer = RKE2Deployer.new('config.yml')
+    deployer.run
+  end
+
+  desc 'Initialize and optimize all nodes'
+  task :init_nodes do
+    deployer = RKE2Deployer.new('config.yml')
+    deployer.initialize_all_nodes
+  end
+
+  desc 'Initialize and optimize a specific node'
+  task :init_node, [:node_name] do |_t, args|
+    unless args[:node_name]
+      puts 'Usage: rake rke2:init_node[node_name]'
+      exit 1
+    end
+
+    deployer = RKE2Deployer.new('config.yml')
+    all_nodes = deployer.instance_variable_get(:@server_nodes) +
+                deployer.instance_variable_get(:@agent_nodes) +
+                deployer.instance_variable_get(:@lb_nodes)
+    node = all_nodes.find { |n| n['name'] == args[:node_name] }
+
+    if node
+      deployer.initialize_node(node)
+    else
+      puts "❌ 节点 '#{args[:node_name]}' 未找到"
+      puts '可用的节点:'
+      all_nodes.each { |n| puts "  - #{n['name']} (#{n['role']})" }
+    end
+  end
+
+  desc 'Diagnose cluster status'
+  task :diagnose do
+    deployer = RKE2Deployer.new('config.yml')
+    deployer.diagnose_cluster_status
+  end
+
+  desc 'Configure kubectl on all server nodes'
+  task :configure_kubectl do
+    deployer = RKE2Deployer.new('config.yml')
+    deployer.configure_kubectl_on_servers
+  end
+
+  desc 'Configure kubectl on a specific server node'
+  task :configure_kubectl_node, [:node_name] do |_t, args|
+    unless args[:node_name]
+      puts 'Usage: rake rke2:configure_kubectl_node[node_name]'
+      exit 1
+    end
+
+    deployer = RKE2Deployer.new('config.yml')
+    node = deployer.instance_variable_get(:@server_nodes).find { |n| n['name'] == args[:node_name] }
+
+    if node
+      deployer.configure_kubectl_on_node(node)
+    else
+      puts "❌ 服务器节点 '#{args[:node_name]}' 未找到"
+      puts '可用的服务器节点:'
+      deployer.instance_variable_get(:@server_nodes).each { |n| puts "  - #{n['name']}" }
+    end
+  end
+
+  desc 'Install k9s and helm on all server nodes'
+  task :install_k9s_helm do
+    deployer = RKE2Deployer.new('config.yml')
+    deployer.install_k9s_helm_on_servers
+  end
+
+  desc 'Install k9s and helm on a specific server node'
+  task :install_k9s_helm_node, [:node_name] do |_t, args|
+    unless args[:node_name]
+      puts 'Usage: rake rke2:install_k9s_helm_node[node_name]'
+      exit 1
+    end
+
+    deployer = RKE2Deployer.new('config.yml')
+    node = deployer.instance_variable_get(:@server_nodes).find { |n| n['name'] == args[:node_name] }
+
+    if node
+      deployer.install_k9s_helm_on_node(node)
+    else
+      puts "❌ 服务器节点 '#{args[:node_name]}' 未找到"
+      puts '可用的服务器节点:'
+      deployer.instance_variable_get(:@server_nodes).each { |n| puts "  - #{n['name']}" }
+    end
+  end
+
+  desc 'Configure Ingress Controller as DaemonSet'
+  task :configure_ingress_daemonset do
+    deployer = RKE2Deployer.new('config.yml')
+    deployer.configure_ingress_daemonset
+  end
+
+  desc 'Fix Ingress Controller RBAC permissions'
+  task :fix_ingress_rbac do
+    deployer = RKE2Deployer.new('config.yml')
+    deployer.fix_ingress_rbac
+  end
+end
+
+namespace :git do
+  desc 'Push changes to git repository'
+  task :push do
+    system 'git add .'
+    system "git commit -m 'Update RKE2 deployment - #{Time.now}'"
+    system 'git pull'
+    system 'git push origin main'
+  end
+end
+
+namespace :test do
+  begin
+    require 'rspec/core/rake_task'
+    RSpec::Core::RakeTask.new(:spec)
+  rescue LoadError
+    puts 'RSpec not available'
+  end
+
+  begin
+    require 'rubocop/rake_task'
+    RuboCop::RakeTask.new(:lint) do |task|
+      task.options = ['--display-cop-names']
+    end
+  rescue LoadError
+    puts 'RuboCop not available'
+  end
+end
+
+namespace :doc do
+  require 'yard'
+  YARD::Rake::YardocTask.new do |t|
+    t.files = ['lib/**/*.rb']
+    t.options = ['--no-private']
+    t.stats_options = ['--list-undoc']
+  end
+rescue LoadError
+  puts 'YARD not available'
+end
+
+task default: ['test:lint']

@@ -1,0 +1,24 @@
+AllCops:
+  SuggestExtensions: false
+  TargetRubyVersion: 3.0
+
+Metrics/ClassLength:
+  Max: 400  # 允许更长的类
+
+Metrics/MethodLength:
+  Max: 50   # 允许更长的方法
+
+Metrics/AbcSize:
+  Max: 50   # 允许更高的复杂度
+
+Metrics/BlockLength:
+  Max: 50   # 允许更长的块
+
+Layout/LineLength:
+  Max: 140  # 允许更长的行
+
+Style/Documentation:
+  Enabled: false  # 暂时禁用文档检查
+
+Style/OptionalBooleanParameter:
+  Enabled: false  # 禁用布尔参数检查

@@ -1,0 +1,26 @@
+# frozen_string_literal: true
+
+source 'https://rubygems.org'
+
+ruby '~> 3.0'
+
+# Core dependencies - 实际在代码中使用的
+gem 'net-scp', '~> 4.0'     # lib/rke2_deploy.rb 中使用
+gem 'net-ssh', '~> 7.2'     # lib/rke2_deploy.rb 中使用
+
+# SSH 密钥支持（net-ssh 需要）
+gem 'bcrypt_pbkdf', '~> 1.1' # SSH 密钥解密支持
+gem 'ed25519', '~> 1.3' # ED25519 SSH 密钥支持
+
+# 标准库 gems - Ruby 3.0+ 需要显式引入
+gem 'fileutils', '~> 1.7'   # lib/rke2_deploy.rb 中使用
+gem 'logger', '~> 1.5'      # lib/rke2_deploy.rb 中使用
+gem 'rake', '~> 13.0'       # Rakefile 支持
+
+group :development, :test do
+  gem 'pry', '~> 0.14' # 调试工具
+  gem 'rspec', '~> 3.13'
+  gem 'rubocop', '~> 1.60'
+  gem 'rubocop-performance', '~> 1.20'
+  gem 'yard', '~> 0.9'
+end

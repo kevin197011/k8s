@@ -1,0 +1,51 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+
+# Configure networking
+networking:
+  # Enable IPv6 in addition to IPv4
+  ipFamily: dual
+  # Configure custom subnets
+  podSubnet: "10.244.0.0/16,fd00:10:244::/56"
+  serviceSubnet: "10.96.0.0/16,fd00:10:96::/112"
+  # Use nftables mode for kube-proxy (better performance)
+  kubeProxyMode: "nftables"
+  # API server settings
+  apiServerAddress: "127.0.0.1" # Bind to localhost for security
+  # Use random port by default for easier multi-cluster
+  # apiServerPort: 6443
+
+# Node configuration
+nodes:
+- role: control-plane
+  # Enable feature gates
+  kubeadmConfigPatches:
+  - |
+    kind: InitConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        node-labels: "ingress-ready=true"
+  # Configure port mappings
+  extraPortMappings:
+  - containerPort: 80
+    hostPort: 80
+    protocol: TCP
+  - containerPort: 443
+    hostPort: 443
+    protocol: TCP
+
+- role: worker
+  # Add custom labels
+  labels:
+    node-role: worker
+    zone: zone-a
+
+- role: worker
+  labels:
+    node-role: worker
+    zone: zone-b
+
+- role: worker
+  labels:
+    node-role: worker
+    zone: zone-c
