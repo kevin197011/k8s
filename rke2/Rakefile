@@ -5,16 +5,17 @@ require 'yaml'
 require_relative 'lib/rke2_deploy'
 
 namespace :rke2 do
-  desc 'Deploy RKE2 cluster'
+  desc 'Deploy RKE2 cluster (modular architecture)'
   task :deploy do
-    deployer = RKE2Deployer.new('config.yml')
+    puts "🚀 部署 RKE2 集群 (使用模块化架构 v#{RKE2::VERSION})..."
+    deployer = RKE2.new('config.yml')
     deployer.run
   end
 
   desc 'Initialize and optimize all nodes'
   task :init_nodes do
-    deployer = RKE2Deployer.new('config.yml')
-    deployer.initialize_all_nodes
+    deployer = RKE2.new('config.yml')
+    deployer.instance_variable_get(:@node_initializer).initialize_all_nodes
   end
 
   desc 'Initialize and optimize a specific node'
@@ -24,14 +25,14 @@ namespace :rke2 do
       exit 1
     end
 
-    deployer = RKE2Deployer.new('config.yml')
+    deployer = RKE2.new('config.yml')
     all_nodes = deployer.instance_variable_get(:@server_nodes) +
                 deployer.instance_variable_get(:@agent_nodes) +
                 deployer.instance_variable_get(:@lb_nodes)
     node = all_nodes.find { |n| n['name'] == args[:node_name] }
 
     if node
-      deployer.initialize_node(node)
+      deployer.instance_variable_get(:@node_initializer).initialize_node(node)
     else
       puts "❌ 节点 '#{args[:node_name]}' 未找到"
       puts '可用的节点:'
@@ -41,14 +42,14 @@ namespace :rke2 do
 
   desc 'Diagnose cluster status'
   task :diagnose do
-    deployer = RKE2Deployer.new('config.yml')
-    deployer.diagnose_cluster_status
+    diagnostics = RKE2.diagnostics('config.yml')
+    diagnostics.diagnose_cluster_status
   end
 
   desc 'Configure kubectl on all server nodes'
   task :configure_kubectl do
-    deployer = RKE2Deployer.new('config.yml')
-    deployer.configure_kubectl_on_servers
+    tools_installer = RKE2.tools_installer('config.yml')
+    tools_installer.configure_kubectl_on_servers
   end
 
   desc 'Configure kubectl on a specific server node'
@@ -58,11 +59,11 @@ namespace :rke2 do
       exit 1
     end
 
-    deployer = RKE2Deployer.new('config.yml')
+    deployer = RKE2.new('config.yml')
     node = deployer.instance_variable_get(:@server_nodes).find { |n| n['name'] == args[:node_name] }
 
     if node
-      deployer.configure_kubectl_on_node(node)
+      deployer.tools_installer.configure_kubectl_on_node(node)
     else
       puts "❌ 服务器节点 '#{args[:node_name]}' 未找到"
       puts '可用的服务器节点:'
@@ -72,8 +73,8 @@ namespace :rke2 do
 
   desc 'Install k9s and helm on all server nodes'
   task :install_k9s_helm do
-    deployer = RKE2Deployer.new('config.yml')
-    deployer.install_k9s_helm_on_servers
+    tools_installer = RKE2.tools_installer('config.yml')
+    tools_installer.install_k9s_helm_on_servers
   end
 
   desc 'Install k9s and helm on a specific server node'
@@ -83,11 +84,11 @@ namespace :rke2 do
       exit 1
     end
 
-    deployer = RKE2Deployer.new('config.yml')
+    deployer = RKE2.new('config.yml')
     node = deployer.instance_variable_get(:@server_nodes).find { |n| n['name'] == args[:node_name] }
 
     if node
-      deployer.install_k9s_helm_on_node(node)
+      deployer.tools_installer.install_k9s_helm_on_node(node)
     else
       puts "❌ 服务器节点 '#{args[:node_name]}' 未找到"
       puts '可用的服务器节点:'
@@ -97,14 +98,14 @@ namespace :rke2 do
 
   desc 'Configure Ingress Controller as DaemonSet'
   task :configure_ingress_daemonset do
-    deployer = RKE2Deployer.new('config.yml')
-    deployer.configure_ingress_daemonset
+    ingress_controller = RKE2.ingress_controller('config.yml')
+    ingress_controller.configure_ingress_daemonset
   end
 
   desc 'Fix Ingress Controller RBAC permissions'
   task :fix_ingress_rbac do
-    deployer = RKE2Deployer.new('config.yml')
-    deployer.fix_ingress_rbac
+    ingress_controller = RKE2.ingress_controller('config.yml')
+    ingress_controller.fix_ingress_rbac
   end
 end
 
